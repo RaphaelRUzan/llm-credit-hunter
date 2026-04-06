@@ -2,10 +2,11 @@
 """
 LLM Credit Hunter — web dashboard & API.
 
-Serves a dashboard of free LLM models and credit opportunities.
+Serves a dashboard of free LLM models, benchmarks, and credit opportunities.
 Runs a background scheduler for daily scans.
 """
 
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -14,22 +15,20 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
+from pydantic import BaseModel
 
 import db
 import scanner
 
 APP_DIR = Path(__file__).parent
-from jinja2 import Environment, FileSystemLoader
 _jinja_env = Environment(loader=FileSystemLoader(str(APP_DIR / "templates")), auto_reload=True, cache_size=0)
 
-# Track scan state
 _scan_lock = threading.Lock()
 _scan_running = False
 
 
 def _run_scan():
-    """Execute a full scan, persist results to SQLite."""
     global _scan_running
     if not _scan_lock.acquire(blocking=False):
         return {"error": "Scan already in progress"}
@@ -39,6 +38,8 @@ def _run_scan():
         results = scanner.run_full_scan()
 
         model_stats = db.upsert_models(results["models"])
+        bench_count = db.upsert_benchmarks(results.get("benchmarks", []))
+
         all_signals = []
         for p in results["providers"]:
             all_signals.append({"source": p["source"], "url": p["url"], "title": p["source"], "snippets": p.get("snippets", [])})
@@ -57,6 +58,7 @@ def _run_scan():
             "models": len(results["models"]),
             "new_models": model_stats["new"],
             "disappeared": model_stats["disappeared"],
+            "benchmarks": bench_count,
             "signals": len(all_signals),
             "new_signals": new_signals,
         }
@@ -65,7 +67,6 @@ def _run_scan():
         _scan_lock.release()
 
 
-# Background scheduler — daily scan at 8:13am
 sched = BackgroundScheduler()
 sched.add_job(_run_scan, "cron", hour=8, minute=13, id="daily_scan")
 
@@ -73,14 +74,12 @@ sched.add_job(_run_scan, "cron", hour=8, minute=13, id="daily_scan")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     sched.start()
-    # Run initial scan if DB is empty
     if db.get_stats()["scans_total"] == 0:
         threading.Thread(target=_run_scan, daemon=True).start()
     yield
     sched.shutdown()
 
 
-import os
 ROOT_PATH = os.environ.get("ROOT_PATH", "")
 app = FastAPI(title="LLM Credit Hunter", lifespan=lifespan, root_path=ROOT_PATH)
 
@@ -92,10 +91,12 @@ async def dashboard(request: Request):
     template = _jinja_env.get_template("index.html")
     html = template.render(
         stats=db.get_stats(),
-        models=db.get_models(),
+        models=db.get_models_with_benchmarks(),
         signals=db.get_signals(limit=50),
         scans=db.get_recent_scans(5),
         scanning=_scan_running,
+        preferences=db.get_preferences(),
+        task_types=list(db.TASK_BENCHMARK_WEIGHTS.keys()),
     )
     return HTMLResponse(html)
 
@@ -104,7 +105,7 @@ async def dashboard(request: Request):
 
 @app.get("/api/models")
 async def api_models(available_only: bool = True):
-    return db.get_models(available_only)
+    return db.get_models_with_benchmarks(available_only)
 
 
 @app.get("/api/signals")
@@ -128,6 +129,46 @@ async def api_scan():
         return JSONResponse({"error": "Scan already in progress"}, status_code=409)
     threading.Thread(target=_run_scan, daemon=True).start()
     return {"status": "started"}
+
+
+# ── Benchmarks API ──────────────────────────────────────────────────────────
+
+@app.get("/api/benchmarks")
+async def api_benchmarks(model_id: str = None):
+    return db.get_benchmarks(model_id)
+
+
+# ── Recommend API ───────────────────────────────────────────────────────────
+
+@app.get("/api/recommend")
+async def api_recommend(task: str = "general", min_context: int = 0, require_tools: bool = False, limit: int = 10):
+    return db.recommend(task, min_context, require_tools, limit)
+
+
+# ── Preferences API ─────────────────────────────────────────────────────────
+
+class PrefBody(BaseModel):
+    task_type: str
+    model_id: str
+    action: str = "boost"
+    weight: float = 1.0
+
+
+@app.get("/api/preferences")
+async def api_preferences(task_type: str = None):
+    return db.get_preferences(task_type)
+
+
+@app.post("/api/preferences")
+async def api_set_preference(body: PrefBody):
+    pref_id = db.set_preference(body.task_type, body.model_id, body.action, body.weight)
+    return {"id": pref_id}
+
+
+@app.delete("/api/preferences/{pref_id}")
+async def api_delete_preference(pref_id: int):
+    db.delete_preference(pref_id)
+    return {"deleted": pref_id}
 
 
 if __name__ == "__main__":

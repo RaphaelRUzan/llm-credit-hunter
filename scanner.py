@@ -61,14 +61,18 @@ RSS_FEEDS = [
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _fetch(url: str) -> str | None:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.text
-    except Exception as e:
-        print(f"  [!] Failed: {url}: {e}", file=sys.stderr)
-        return None
+def _fetch(url: str, retries: int = 2) -> str | None:
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            return r.text
+        except Exception as e:
+            if attempt < retries:
+                time.sleep(2)
+                continue
+            print(f"  [!] Failed: {url}: {e}", file=sys.stderr)
+            return None
 
 
 def _text_from_html(html: str) -> str:
@@ -106,14 +110,113 @@ def scan_openrouter_free_models() -> list[dict]:
     for m in data.get("data", []):
         pricing = m.get("pricing", {})
         if float(pricing.get("prompt", "1") or "1") == 0 and float(pricing.get("completion", "1") or "1") == 0:
+            arch = m.get("architecture", {})
+            supported = m.get("supported_parameters", [])
             models.append({
                 "id": m.get("id", ""),
                 "name": m.get("name", ""),
                 "context_length": m.get("context_length", 0),
                 "provider": m.get("id", "").split("/")[0] if "/" in m.get("id", "") else "unknown",
+                "description": m.get("description", ""),
+                "modality": arch.get("modality", "text->text"),
+                "input_modalities": arch.get("input_modalities", ["text"]),
+                "output_modalities": arch.get("output_modalities", ["text"]),
+                "supports_tools": "tools" in supported,
+                "supports_reasoning": "reasoning" in supported or "include_reasoning" in supported,
+                "supports_structured": "structured_outputs" in supported,
+                "max_completion": m.get("top_provider", {}).get("max_completion_tokens", 0),
+                "hugging_face_id": m.get("hugging_face_id", ""),
             })
     models.sort(key=lambda x: x.get("context_length", 0), reverse=True)
     return models
+
+
+HF_PARQUET_URL = "https://huggingface.co/datasets/open-llm-leaderboard/contents/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
+HF_BENCHMARKS = ["IFEval", "BBH", "MATH Lvl 5", "GPQA", "MMLU-PRO", "MUSR", "Average ⬆️"]
+
+# Map benchmark names to task categories for the recommend engine
+BENCHMARK_TASK_MAP = {
+    "IFEval": "instruction_following",
+    "BBH": "reasoning",
+    "MATH Lvl 5": "math",
+    "GPQA": "science",
+    "MMLU-PRO": "knowledge",
+    "MUSR": "reasoning",
+    "Average ⬆️": "overall",
+}
+
+
+def scan_hf_leaderboard(openrouter_models: list[dict]) -> list[dict]:
+    """Pull benchmark scores from HF Open LLM Leaderboard via parquet download."""
+    import tempfile
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        print("  [!] pyarrow not installed, skipping HF leaderboard", file=sys.stderr)
+        return []
+
+    # Build lookup: normalized HF ID → OpenRouter model ID
+    or_lookup = {}
+    for m in openrouter_models:
+        or_id = m["id"].replace(":free", "").lower()
+        or_lookup[or_id] = m["id"]
+        hf_id = (m.get("hugging_face_id") or "").lower()
+        if hf_id:
+            or_lookup[hf_id] = m["id"]
+
+    print(f"  Downloading HF leaderboard parquet ({len(or_lookup)} lookup entries)...", file=sys.stderr)
+
+    # Download parquet file
+    try:
+        r = requests.get(HF_PARQUET_URL, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"  [!] HF parquet download failed: {e}", file=sys.stderr)
+        return []
+
+    # Write to temp file and read with pyarrow
+    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
+        tmp.write(r.content)
+        tmp.flush()
+        table = pq.read_table(tmp.name)
+
+    data = table.to_pydict()
+    total_rows = len(data.get("fullname", []))
+    benchmarks = []
+    matched = 0
+
+    for i in range(total_rows):
+        hf_name = (data["fullname"][i] or "").lower()
+        if not hf_name:
+            continue
+
+        # Match against OpenRouter models
+        or_id = or_lookup.get(hf_name)
+        if not or_id:
+            # Fuzzy: match on model name portion only
+            name_part = hf_name.split("/")[-1] if "/" in hf_name else hf_name
+            for key in or_lookup:
+                if key.split("/")[-1] == name_part:
+                    or_id = or_lookup[key]
+                    break
+
+        if not or_id:
+            continue
+
+        matched += 1
+        for bench in HF_BENCHMARKS:
+            score = data[bench][i]
+            if score is not None and isinstance(score, (int, float)):
+                benchmarks.append({
+                    "model_id": or_id,
+                    "benchmark": bench,
+                    "score": round(float(score), 2),
+                    "source": "hf_open_llm_leaderboard",
+                    "category": BENCHMARK_TASK_MAP.get(bench, "other"),
+                })
+
+    print(f"  Scanned {total_rows} entries, matched {matched} models, {len(benchmarks)} scores", file=sys.stderr)
+    return benchmarks
 
 
 def scan_provider_pages() -> list[dict]:
@@ -225,8 +328,11 @@ def scan_rss_feeds() -> list[dict]:
 
 def run_full_scan() -> dict:
     """Run all scanners and return structured results."""
+    models = scan_openrouter_free_models()
+    benchmarks = scan_hf_leaderboard(models)
     return {
-        "models": scan_openrouter_free_models(),
+        "models": models,
+        "benchmarks": benchmarks,
         "providers": scan_provider_pages(),
         "hackernews": scan_hackernews(hours_back=48),
         "github": scan_github_lists(),

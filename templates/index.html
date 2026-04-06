@@ -17,31 +17,28 @@
       --green: #22c55e;
       --amber: #f59e0b;
       --red: #ef4444;
+      --cyan: #06b6d4;
     }
     * { box-sizing: border-box; }
     body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; font-size: 13px; }
     .surface { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
     .surface2 { background: var(--surface2); }
-    .badge-new {
-      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
-      background: var(--green); color: #000; text-transform: uppercase; letter-spacing: 0.5px;
-    }
-    .badge-gone {
-      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
-      background: var(--red); color: #fff; text-transform: uppercase; letter-spacing: 0.5px;
-    }
+    .badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--green); color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-gone { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--red); color: #fff; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-cap { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 500; border: 1px solid var(--border); color: var(--text2); margin-right: 2px; }
+    .badge-cap.active { border-color: var(--cyan); color: var(--cyan); }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     table { width: 100%; border-collapse: collapse; }
     th { text-align: left; padding: 8px 12px; color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
     th:hover { color: var(--text); }
-    th .sort-arrow { opacity: 0.3; margin-left: 4px; }
-    th.sorted .sort-arrow { opacity: 1; }
     td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(99, 102, 241, 0.05); }
     .ctx-bar { height: 4px; border-radius: 2px; background: var(--border); }
     .ctx-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+    .bench-bar { height: 4px; border-radius: 2px; background: var(--border); display: inline-block; width: 50px; vertical-align: middle; }
+    .bench-fill { height: 100%; border-radius: 2px; }
     button { cursor: pointer; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -50,9 +47,18 @@
     .tab:hover:not(.active) { color: var(--text); }
     .panel { display: none; }
     .panel.active { display: block; }
-    .filter-input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; color: var(--text); outline: none; width: 250px; }
-    .filter-input:focus { border-color: var(--accent); }
+    .filter-input, .select-input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; color: var(--text); outline: none; }
+    .filter-input { width: 250px; }
+    .filter-input:focus, .select-input:focus { border-color: var(--accent); }
     .filter-input::placeholder { color: var(--text2); }
+    .select-input { font-size: 12px; }
+    .btn-sm { padding: 4px 10px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); }
+    .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+    .btn-sm.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .btn-danger { border-color: var(--red); color: var(--red); }
+    .btn-danger:hover { background: var(--red); color: #fff; }
+    .score-cell { font-variant-numeric: tabular-nums; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body class="min-h-screen p-6">
@@ -63,7 +69,9 @@
       <h1 class="text-xl font-bold tracking-tight" style="color: var(--text)">LLM Credit Hunter</h1>
       <p style="color: var(--text2); font-size: 12px;">
         Last scan: <span id="last-scan">{{ stats.last_scan[:16] if stats.last_scan else 'never' }}</span>
-        &middot; {{ stats.models_available }} free models &middot; {{ stats.signals_total }} signals tracked
+        &middot; {{ stats.models_available }} free models
+        &middot; {{ stats.benchmarked }} benchmarked
+        &middot; {{ stats.signals_total }} signals
       </p>
     </div>
     <button id="scan-btn" onclick="triggerScan()" class="px-4 py-2 rounded-lg font-medium text-sm"
@@ -75,16 +83,20 @@
   </header>
 
   <!-- Stats Row -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
     <stat-card label="Free Models" value="{{ stats.models_available }}" sub="of {{ stats.models_total }} tracked"></stat-card>
+    <stat-card label="Benchmarked" value="{{ stats.benchmarked }}" sub="with HF scores"></stat-card>
     <stat-card label="Signals" value="{{ stats.signals_total }}" sub="{{ stats.scans_total }} scans"></stat-card>
     <stat-card label="Providers" value="10" sub="monitored"></stat-card>
-    <stat-card label="Sources" value="5" sub="HN / RSS / GitHub / API / Pages"></stat-card>
+    <stat-card label="Sources" value="6" sub="OR / HF / HN / RSS / GH / Pages"></stat-card>
   </div>
 
   <!-- Tabs -->
   <div class="flex gap-1 mb-0" style="padding-left: 4px;">
     <div class="tab active" data-tab="models">Free Models</div>
+    <div class="tab" data-tab="benchmarks">Benchmarks</div>
+    <div class="tab" data-tab="recommend">Recommend</div>
+    <div class="tab" data-tab="preferences">Preferences</div>
     <div class="tab" data-tab="signals">Signals</div>
     <div class="tab" data-tab="programs">Credit Programs</div>
   </div>
@@ -92,7 +104,7 @@
   <!-- Models Panel -->
   <div class="surface p-0 mb-6 panel active" id="panel-models">
     <div class="p-4 flex items-center gap-4" style="border-bottom: 1px solid var(--border);">
-      <input class="filter-input" id="model-filter" placeholder="Filter models..." oninput="filterModels()">
+      <input class="filter-input" id="model-filter" placeholder="Filter models..." oninput="filterRows('.model-row', this.value)">
       <label style="color: var(--text2); font-size: 12px;">
         <input type="checkbox" id="show-gone" onchange="toggleGone()"> Show disappeared
       </label>
@@ -101,10 +113,11 @@
       <table id="model-table">
         <thead>
           <tr>
-            <th data-sort="id">Model <span class="sort-arrow">&#x25B2;</span></th>
-            <th data-sort="provider">Provider <span class="sort-arrow">&#x25B2;</span></th>
-            <th data-sort="context_length" class="sorted">Context <span class="sort-arrow">&#x25BC;</span></th>
-            <th data-sort="first_seen">First Seen <span class="sort-arrow">&#x25B2;</span></th>
+            <th>Model</th>
+            <th>Provider</th>
+            <th>Context</th>
+            <th>Capabilities</th>
+            <th>First Seen</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -114,26 +127,19 @@
             <td>
               <a href="https://openrouter.ai/{{ m.id }}" target="_blank">{{ m.id }}</a>
               {% set today = stats.last_scan[:10] if stats.last_scan else '' %}
-              {% if m.first_seen[:10] == today %}
-              <span class="badge-new">new</span>
-              {% endif %}
+              {% if m.first_seen[:10] == today %}<span class="badge-new">new</span>{% endif %}
             </td>
             <td style="color: var(--text2)">{{ m.provider }}</td>
+            <td>{{ "{:,}".format(m.context_length) }}</td>
             <td>
-              <div class="flex items-center gap-2">
-                <span>{{ "{:,}".format(m.context_length) }}</span>
-                <div class="ctx-bar" style="width: 60px;">
-                  <div class="ctx-fill" style="width: {{ [100, (m.context_length / 10000)|round|int]|min }}%"></div>
-                </div>
-              </div>
+              {% if m.benchmarks %}
+              <span class="badge-cap active" title="Has benchmark scores">bench</span>
+              {% endif %}
             </td>
             <td style="color: var(--text2)">{{ m.first_seen[:10] }}</td>
             <td>
-              {% if m.is_available %}
-              <span style="color: var(--green);">&#x25CF; Available</span>
-              {% else %}
-              <span class="badge-gone">gone</span>
-              {% endif %}
+              {% if m.is_available %}<span style="color: var(--green);">&#x25CF;</span>
+              {% else %}<span class="badge-gone">gone</span>{% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -142,34 +148,146 @@
     </div>
   </div>
 
+  <!-- Benchmarks Panel -->
+  <div class="surface p-0 mb-6 panel" id="panel-benchmarks">
+    <div class="p-4 flex items-center gap-4" style="border-bottom: 1px solid var(--border);">
+      <input class="filter-input" id="bench-filter" placeholder="Filter models..." oninput="filterRows('.bench-row', this.value)">
+    </div>
+    <div style="overflow-x: auto;">
+      <table id="bench-table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Average</th>
+            <th>IFEval</th>
+            <th>BBH</th>
+            <th>MATH</th>
+            <th>GPQA</th>
+            <th>MMLU-PRO</th>
+            <th>MUSR</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set bench_names = ['Average ⬆️', 'IFEval', 'BBH', 'MATH Lvl 5', 'GPQA', 'MMLU-PRO', 'MUSR'] %}
+          {% for m in models if m.benchmarks %}
+          <tr class="bench-row">
+            <td><a href="https://openrouter.ai/{{ m.id }}" target="_blank">{{ m.id }}</a></td>
+            {% for bn in bench_names %}
+            <td class="score-cell">
+              {% if bn in m.benchmarks %}
+                {% set s = m.benchmarks[bn].score %}
+                <span>{{ "%.1f"|format(s) }}</span>
+                <div class="bench-bar">
+                  <div class="bench-fill" style="width: {{ [100, s]|min }}%; background: {% if s > 50 %}var(--green){% elif s > 25 %}var(--amber){% else %}var(--red){% endif %};"></div>
+                </div>
+              {% else %}
+                <span style="color: var(--text2)">—</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not models|selectattr('benchmarks')|list %}
+    <div class="p-8 text-center" style="color: var(--text2);">No benchmark data yet. Run a scan to pull HF Leaderboard scores.</div>
+    {% endif %}
+  </div>
+
+  <!-- Recommend Panel -->
+  <div class="surface p-0 mb-6 panel" id="panel-recommend">
+    <div class="p-4 flex items-center gap-4 flex-wrap" style="border-bottom: 1px solid var(--border);">
+      <label style="color: var(--text2); font-size: 12px;">Task:</label>
+      <select class="select-input" id="rec-task" onchange="loadRecommendations()">
+        {% for t in task_types %}
+        <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+      <label style="color: var(--text2); font-size: 12px;">Min Context:</label>
+      <select class="select-input" id="rec-ctx" onchange="loadRecommendations()">
+        <option value="0">Any</option>
+        <option value="32000">32k+</option>
+        <option value="100000">100k+</option>
+        <option value="200000">200k+</option>
+      </select>
+      <label style="color: var(--text2); font-size: 12px;">
+        <input type="checkbox" id="rec-tools" onchange="loadRecommendations()"> Requires tools
+      </label>
+    </div>
+    <div id="rec-results" class="p-4">
+      <p style="color: var(--text2)">Select a task type to get recommendations.</p>
+    </div>
+  </div>
+
+  <!-- Preferences Panel -->
+  <div class="surface p-0 mb-6 panel" id="panel-preferences">
+    <div class="p-4" style="border-bottom: 1px solid var(--border);">
+      <div class="flex items-center gap-4 flex-wrap">
+        <select class="select-input" id="pref-task">
+          {% for t in task_types %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+        <select class="select-input" id="pref-model">
+          {% for m in models if m.is_available %}
+          <option value="{{ m.id }}">{{ m.id }}</option>
+          {% endfor %}
+        </select>
+        <select class="select-input" id="pref-action">
+          <option value="pin">Pin (always first)</option>
+          <option value="boost">Boost (multiply score)</option>
+          <option value="block">Block (never recommend)</option>
+        </select>
+        <input type="number" class="select-input" id="pref-weight" value="1.5" min="0.1" max="10" step="0.1" style="width: 70px;" title="Weight multiplier (for boost)">
+        <button class="btn-sm active" onclick="addPreference()">Add</button>
+      </div>
+    </div>
+    <div id="pref-list" class="p-4">
+      {% if preferences %}
+      <table style="width: 100%;">
+        <thead>
+          <tr><th>Task</th><th>Model</th><th>Action</th><th>Weight</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for p in preferences %}
+          <tr class="pref-row">
+            <td>{{ p.task_type }}</td>
+            <td style="color: var(--text2)">{{ p.model_id }}</td>
+            <td>
+              {% if p.action == 'pin' %}<span style="color: var(--cyan)">pin</span>
+              {% elif p.action == 'block' %}<span style="color: var(--red)">block</span>
+              {% else %}<span style="color: var(--amber)">boost</span>{% endif %}
+            </td>
+            <td class="score-cell">{{ p.weight }}</td>
+            <td><button class="btn-sm btn-danger" onclick="deletePreference({{ p.id }})">x</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color: var(--text2)">No preferences set. Add rules above to customize model recommendations.</p>
+      {% endif %}
+    </div>
+  </div>
+
   <!-- Signals Panel -->
   <div class="surface p-0 mb-6 panel" id="panel-signals">
     <div class="p-4" style="border-bottom: 1px solid var(--border);">
-      <input class="filter-input" id="signal-filter" placeholder="Filter signals..." oninput="filterSignals()">
+      <input class="filter-input" id="signal-filter" placeholder="Filter signals..." oninput="filterRows('.signal-row', this.value)">
     </div>
     <div style="overflow-x: auto;">
-      <table id="signal-table">
-        <thead>
-          <tr>
-            <th>Source</th>
-            <th>Title</th>
-            <th>Date</th>
-          </tr>
-        </thead>
+      <table>
+        <thead><tr><th>Source</th><th>Title</th><th>Date</th></tr></thead>
         <tbody>
           {% for s in signals %}
           <tr class="signal-row">
             <td style="color: var(--text2); white-space: nowrap;">{{ s.source }}</td>
             <td>
-              {% if s.url %}
-              <a href="{{ s.url }}" target="_blank">{{ s.title[:100] }}</a>
-              {% else %}
-              {{ s.title[:100] }}
-              {% endif %}
+              {% if s.url %}<a href="{{ s.url }}" target="_blank">{{ s.title[:100] }}</a>
+              {% else %}{{ s.title[:100] }}{% endif %}
               {% set today = stats.last_scan[:10] if stats.last_scan else '' %}
-              {% if s.first_seen[:10] == today %}
-              <span class="badge-new">new</span>
-              {% endif %}
+              {% if s.first_seen[:10] == today %}<span class="badge-new">new</span>{% endif %}
             </td>
             <td style="color: var(--text2); white-space: nowrap;">{{ s.first_seen[:10] }}</td>
           </tr>
@@ -182,47 +300,57 @@
   <!-- Credit Programs Panel -->
   <div class="surface p-4 mb-6 panel" id="panel-programs">
     <div class="grid gap-4 md:grid-cols-2">
-      {% for p in signals if 'provider_page' in (p.source|lower) or p.source in ['Anthropic', 'OpenAI', 'Google AI', 'AWS Bedrock', 'Azure OpenAI', 'Mistral', 'Together AI', 'Groq', 'Fireworks AI', 'OpenRouter'] %}
+      <p style="color: var(--text2); font-size: 11px; margin-bottom: 12px; grid-column: 1 / -1;">
+        Only showing programs with $50+ in credits and API access usable by third-party clients (e.g. OpenClaw).
+      </p>
       <div class="surface2 p-4 rounded-lg">
-        <div class="flex items-center justify-between mb-2">
-          <span class="font-medium">{{ p.source }}</span>
-          {% if p.url %}<a href="{{ p.url }}" target="_blank" style="font-size: 11px;">Visit &rarr;</a>{% endif %}
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">AWS Activate</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">up to $100k</span>
         </div>
-        <p style="color: var(--text2); font-size: 12px; line-height: 1.5;">{{ p.title[:200] }}</p>
-      </div>
-      {% else %}
-      <!-- Static fallback if no provider signals yet -->
-      <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">AWS Activate</span>
-        <p style="color: var(--text2); font-size: 12px;">Up to $100k in credits. Covers Bedrock (Claude, Llama, etc).</p>
+        <p style="color: var(--text2); font-size: 12px;">Bedrock API — Claude, Llama, Mistral, Cohere. Standard API keys, works with any client.</p>
         <a href="https://aws.amazon.com/activate/" target="_blank" style="font-size: 11px;">Apply &rarr;</a>
       </div>
       <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">Microsoft for Startups</span>
-        <p style="color: var(--text2); font-size: 12px;">Up to $150k Azure/OpenAI credits via Founders Hub.</p>
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">Microsoft for Startups</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">up to $150k</span>
+        </div>
+        <p style="color: var(--text2); font-size: 12px;">Azure OpenAI API — GPT-4o, o3, etc. Standard OpenAI-compatible API via Azure endpoints.</p>
         <a href="https://www.microsoft.com/en-us/startups" target="_blank" style="font-size: 11px;">Apply &rarr;</a>
       </div>
       <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">Google Cloud Free</span>
-        <p style="color: var(--text2); font-size: 12px;">$300 free trial credits. Gemini free tier via AI Studio.</p>
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">Google Cloud Free Trial</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">$300</span>
+        </div>
+        <p style="color: var(--text2); font-size: 12px;">Vertex AI — Gemini, Claude via API. Standard REST/gRPC, works with any client.</p>
         <a href="https://cloud.google.com/free" target="_blank" style="font-size: 11px;">Start &rarr;</a>
       </div>
       <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">Azure Free</span>
-        <p style="color: var(--text2); font-size: 12px;">$200 free credits for 30 days. Covers Azure OpenAI.</p>
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">Azure Free Trial</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">$200</span>
+        </div>
+        <p style="color: var(--text2); font-size: 12px;">Azure OpenAI API — 30 days. OpenAI-compatible endpoints, any client works.</p>
         <a href="https://azure.microsoft.com/en-us/free/" target="_blank" style="font-size: 11px;">Start &rarr;</a>
       </div>
       <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">Google AI Studio</span>
-        <p style="color: var(--text2); font-size: 12px;">Gemini 2.5 Pro/Flash — generous free tier, no card required.</p>
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">Google AI Studio (free tier)</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">ongoing</span>
+        </div>
+        <p style="color: var(--text2); font-size: 12px;">Gemini 2.5 Pro/Flash — generous free tier via API key. OpenAI-compatible endpoint available.</p>
         <a href="https://ai.google.dev/pricing" target="_blank" style="font-size: 11px;">Use &rarr;</a>
       </div>
       <div class="surface2 p-4 rounded-lg">
-        <span class="font-medium">Fireworks AI</span>
-        <p style="color: var(--text2); font-size: 12px;">$1 in free credits on signup.</p>
-        <a href="https://fireworks.ai/pricing" target="_blank" style="font-size: 11px;">Start &rarr;</a>
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">OpenRouter (free models)</span>
+          <span style="color: var(--green); font-size: 12px; font-weight: 600;">ongoing</span>
+        </div>
+        <p style="color: var(--text2); font-size: 12px;">28+ free models via OpenAI-compatible API. Rate limited but zero cost. See Free Models tab.</p>
+        <a href="https://openrouter.ai/keys" target="_blank" style="font-size: 11px;">Get key &rarr;</a>
       </div>
-      {% endfor %}
     </div>
   </div>
 
@@ -230,76 +358,38 @@
   <script>
     class StatCard extends HTMLElement {
       connectedCallback() {
-        const label = this.getAttribute('label');
-        const value = this.getAttribute('value');
-        const sub = this.getAttribute('sub');
         this.innerHTML = `
           <div class="surface p-4">
-            <div style="color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">${label}</div>
-            <div style="font-size: 24px; font-weight: 700;">${value}</div>
-            <div style="color: var(--text2); font-size: 11px; margin-top: 2px;">${sub}</div>
-          </div>
-        `;
+            <div style="color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">${this.getAttribute('label')}</div>
+            <div style="font-size: 24px; font-weight: 700;">${this.getAttribute('value')}</div>
+            <div style="color: var(--text2); font-size: 11px; margin-top: 2px;">${this.getAttribute('sub')}</div>
+          </div>`;
       }
     }
     customElements.define('stat-card', StatCard);
   </script>
 
-  <!-- Interactions -->
   <script>
-    // Tabs
+    // ── Tabs ────────────────────────────────────────────────────────────────
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         tab.classList.add('active');
         document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+        if (tab.dataset.tab === 'recommend') loadRecommendations();
       });
     });
 
-    // Sort
-    let sortCol = 'context_length';
-    let sortDir = -1; // -1 = desc
-
-    document.querySelectorAll('#model-table th[data-sort]').forEach(th => {
-      th.addEventListener('click', () => {
-        const col = th.dataset.sort;
-        if (col === sortCol) { sortDir *= -1; }
-        else { sortCol = col; sortDir = col === 'context_length' ? -1 : 1; }
-
-        document.querySelectorAll('#model-table th').forEach(t => {
-          t.classList.remove('sorted');
-          t.querySelector('.sort-arrow').textContent = '\u25B2';
-        });
-        th.classList.add('sorted');
-        th.querySelector('.sort-arrow').textContent = sortDir === 1 ? '\u25B2' : '\u25BC';
-
-        const tbody = document.querySelector('#model-table tbody');
-        const rows = [...tbody.querySelectorAll('tr')];
-        rows.sort((a, b) => {
-          const aCell = a.querySelector(`td:nth-child(${th.cellIndex + 1})`);
-          const bCell = b.querySelector(`td:nth-child(${th.cellIndex + 1})`);
-          let aVal = aCell.textContent.trim().replace(/,/g, '');
-          let bVal = bCell.textContent.trim().replace(/,/g, '');
-          const aNum = parseFloat(aVal);
-          const bNum = parseFloat(bVal);
-          if (!isNaN(aNum) && !isNaN(bNum)) return (aNum - bNum) * sortDir;
-          return aVal.localeCompare(bVal) * sortDir;
-        });
-        rows.forEach(r => tbody.appendChild(r));
-      });
-    });
-
-    // Filter models
-    function filterModels() {
-      const q = document.getElementById('model-filter').value.toLowerCase();
-      document.querySelectorAll('.model-row').forEach(row => {
+    // ── Generic filter ─────────────────────────────────────────────────────
+    function filterRows(selector, query) {
+      const q = query.toLowerCase();
+      document.querySelectorAll(selector).forEach(row => {
         if (row.classList.contains('gone-hidden')) return;
         row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
       });
     }
 
-    // Toggle disappeared models
     function toggleGone() {
       const show = document.getElementById('show-gone').checked;
       document.querySelectorAll('.model-row').forEach(row => {
@@ -310,15 +400,90 @@
       });
     }
 
-    // Filter signals
-    function filterSignals() {
-      const q = document.getElementById('signal-filter').value.toLowerCase();
-      document.querySelectorAll('.signal-row').forEach(row => {
-        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
-      });
+    // ── Recommend ──────────────────────────────────────────────────────────
+    async function loadRecommendations() {
+      const task = document.getElementById('rec-task').value;
+      const ctx = document.getElementById('rec-ctx').value;
+      const tools = document.getElementById('rec-tools').checked;
+      const container = document.getElementById('rec-results');
+      container.innerHTML = '<p style="color: var(--text2)">Loading...</p>';
+
+      try {
+        const res = await fetch(`api/recommend?task=${task}&min_context=${ctx}&require_tools=${tools}&limit=15`);
+        const data = await res.json();
+        if (!data.length) {
+          container.innerHTML = '<p style="color: var(--text2)">No models match these criteria.</p>';
+          return;
+        }
+
+        let html = '<table style="width:100%"><thead><tr>';
+        html += '<th>#</th><th>Model</th><th>Score</th><th>Bench</th><th>Context</th><th>Capabilities</th><th></th>';
+        html += '</tr></thead><tbody>';
+
+        data.forEach((m, i) => {
+          const caps = [];
+          if (m.capabilities?.supports_tools === 'True') caps.push('<span class="badge-cap active">tools</span>');
+          if (m.capabilities?.supports_reasoning === 'True') caps.push('<span class="badge-cap active">reason</span>');
+          if (m.capabilities?.supports_structured === 'True') caps.push('<span class="badge-cap active">struct</span>');
+
+          html += `<tr>
+            <td style="color: var(--text2)">${i + 1}</td>
+            <td>
+              <a href="https://openrouter.ai/${m.model_id}" target="_blank">${m.model_id}</a>
+              ${m.pinned ? '<span class="badge-cap active" style="border-color: var(--amber); color: var(--amber);">pinned</span>' : ''}
+            </td>
+            <td class="score-cell" style="font-weight: 600;">${m.score.toFixed(1)}</td>
+            <td class="score-cell" style="color: var(--text2)">${m.bench_score.toFixed(1)}</td>
+            <td>${m.context_length.toLocaleString()}</td>
+            <td>${caps.join('')}</td>
+            <td>
+              <button class="btn-sm" onclick="quickPin('${task}', '${m.model_id}')" title="Pin for ${task}">pin</button>
+              <button class="btn-sm btn-danger" onclick="quickBlock('${task}', '${m.model_id}')" title="Block for ${task}">block</button>
+            </td>
+          </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<p style="color: var(--red)">Error: ${e.message}</p>`;
+      }
     }
 
-    // Scan trigger
+    // ── Preferences ────────────────────────────────────────────────────────
+    async function addPreference() {
+      const body = {
+        task_type: document.getElementById('pref-task').value,
+        model_id: document.getElementById('pref-model').value,
+        action: document.getElementById('pref-action').value,
+        weight: parseFloat(document.getElementById('pref-weight').value) || 1.0,
+      };
+      await fetch('api/preferences', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+      location.reload();
+    }
+
+    async function deletePreference(id) {
+      await fetch(`api/preferences/${id}`, { method: 'DELETE' });
+      location.reload();
+    }
+
+    async function quickPin(task, modelId) {
+      await fetch('api/preferences', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ task_type: task, model_id: modelId, action: 'pin', weight: 1.0 })
+      });
+      loadRecommendations();
+    }
+
+    async function quickBlock(task, modelId) {
+      await fetch('api/preferences', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ task_type: task, model_id: modelId, action: 'block', weight: 1.0 })
+      });
+      loadRecommendations();
+    }
+
+    // ── Scan trigger ───────────────────────────────────────────────────────
     async function triggerScan() {
       const btn = document.getElementById('scan-btn');
       const icon = document.getElementById('scan-icon');
@@ -326,18 +491,13 @@
       btn.disabled = true;
       icon.classList.add('spin');
       text.textContent = 'Scanning...';
-
       try {
         const res = await fetch('api/scan', { method: 'POST' });
         if (res.ok) {
           text.textContent = 'Running...';
-          // Poll until done
           const poll = setInterval(async () => {
             const stats = await (await fetch('api/stats')).json();
-            if (!stats.scanning) {
-              clearInterval(poll);
-              location.reload();
-            }
+            if (!stats.scanning) { clearInterval(poll); location.reload(); }
           }, 3000);
         } else {
           const data = await res.json();
