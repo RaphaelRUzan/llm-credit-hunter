@@ -370,6 +370,9 @@
   </script>
 
   <script>
+    // ── Base URL (works behind reverse proxy) ────────────────────────────
+    const BASE = document.location.pathname.replace(/\/$/, '') + '/';
+
     // ── Tabs ────────────────────────────────────────────────────────────────
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -409,7 +412,7 @@
       container.innerHTML = '<p style="color: var(--text2)">Loading...</p>';
 
       try {
-        const res = await fetch(`api/recommend?task=${task}&min_context=${ctx}&require_tools=${tools}&limit=15`);
+        const res = await fetch(BASE + `api/recommend?task=${task}&min_context=${ctx}&require_tools=${tools}&limit=15`);
         const data = await res.json();
         if (!data.length) {
           container.innerHTML = '<p style="color: var(--text2)">No models match these criteria.</p>';
@@ -458,17 +461,17 @@
         action: document.getElementById('pref-action').value,
         weight: parseFloat(document.getElementById('pref-weight').value) || 1.0,
       };
-      await fetch('api/preferences', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+      await fetch(BASE + 'api/preferences', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
       location.reload();
     }
 
     async function deletePreference(id) {
-      await fetch(`api/preferences/${id}`, { method: 'DELETE' });
+      await fetch(BASE + `api/preferences/${id}`, { method: 'DELETE' });
       location.reload();
     }
 
     async function quickPin(task, modelId) {
-      await fetch('api/preferences', {
+      await fetch(BASE + 'api/preferences', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ task_type: task, model_id: modelId, action: 'pin', weight: 1.0 })
       });
@@ -476,7 +479,7 @@
     }
 
     async function quickBlock(task, modelId) {
-      await fetch('api/preferences', {
+      await fetch(BASE + 'api/preferences', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ task_type: task, model_id: modelId, action: 'block', weight: 1.0 })
       });
@@ -492,11 +495,11 @@
       icon.classList.add('spin');
       text.textContent = 'Scanning...';
       try {
-        const res = await fetch('api/scan', { method: 'POST' });
+        const res = await fetch(BASE + 'api/scan', { method: 'POST' });
         if (res.ok) {
           text.textContent = 'Running...';
           const poll = setInterval(async () => {
-            const stats = await (await fetch('api/stats')).json();
+            const stats = await (await fetch(BASE + 'api/stats')).json();
             if (!stats.scanning) { clearInterval(poll); location.reload(); }
           }, 3000);
         } else {
