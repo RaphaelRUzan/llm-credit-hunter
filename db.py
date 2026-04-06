@@ -265,13 +265,13 @@ def get_preferences(task_type: str = None) -> list[dict]:
 # ── Recommend Engine ────────────────────────────────────────────────────────
 
 TASK_BENCHMARK_WEIGHTS = {
-    "coding": {"IFEval": 0.3, "BBH": 0.3, "MATH Lvl 5": 0.2, "Average ⬆️": 0.2},
-    "math": {"MATH Lvl 5": 0.5, "BBH": 0.2, "GPQA": 0.2, "Average ⬆️": 0.1},
-    "reasoning": {"BBH": 0.3, "MUSR": 0.3, "GPQA": 0.2, "Average ⬆️": 0.2},
-    "science": {"GPQA": 0.4, "MMLU-PRO": 0.3, "Average ⬆️": 0.2, "BBH": 0.1},
-    "knowledge": {"MMLU-PRO": 0.4, "GPQA": 0.2, "BBH": 0.2, "Average ⬆️": 0.2},
-    "instruction_following": {"IFEval": 0.5, "BBH": 0.2, "Average ⬆️": 0.3},
-    "general": {"Average ⬆️": 0.4, "BBH": 0.2, "IFEval": 0.2, "MMLU-PRO": 0.2},
+    "coding": {"SWE-bench Verified": 0.3, "Arena Coding": 0.25, "IFEval": 0.15, "BBH": 0.15, "HumanEval": 0.15},
+    "math": {"Arena Math": 0.3, "MATH Lvl 5": 0.3, "MATH": 0.2, "GPQA": 0.1, "BBH": 0.1},
+    "reasoning": {"Arena Hard Prompts": 0.3, "BBH": 0.25, "MUSR": 0.25, "GPQA": 0.2},
+    "science": {"GPQA": 0.4, "MMLU-PRO": 0.3, "Arena Elo": 0.2, "BBH": 0.1},
+    "knowledge": {"MMLU-PRO": 0.3, "MMLU": 0.2, "Arena Elo": 0.2, "GPQA": 0.15, "BBH": 0.15},
+    "instruction_following": {"Arena IF": 0.3, "IFEval": 0.4, "Arena Elo": 0.15, "Average ⬆️": 0.15},
+    "general": {"Arena Elo": 0.3, "Average ⬆️": 0.2, "SWE-bench Verified": 0.15, "BBH": 0.15, "IFEval": 0.1, "MMLU-PRO": 0.1},
 }
 
 
@@ -299,12 +299,18 @@ def recommend(task_type: str = "general", min_context: int = 0, require_tools: b
             if model_caps.get("supports_tools") != "True":
                 continue
 
-        # Compute weighted benchmark score
+        # Compute weighted benchmark score (normalize Arena Elo to 0-100 scale)
         bench_score = 0.0
         bench_count = 0
         for bench, w in weights.items():
             if bench in m.get("benchmarks", {}):
-                bench_score += m["benchmarks"][bench]["score"] * w
+                raw = m["benchmarks"][bench]["score"]
+                # Normalize Arena Elo (1000-1400 range) to 0-100
+                if bench.startswith("Arena"):
+                    normalized = max(0, min(100, (raw - 1000) / 4))
+                else:
+                    normalized = raw
+                bench_score += normalized * w
                 bench_count += 1
 
         # Normalize: if we only matched some benchmarks, scale up

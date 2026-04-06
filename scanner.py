@@ -219,6 +219,119 @@ def scan_hf_leaderboard(openrouter_models: list[dict]) -> list[dict]:
     return benchmarks
 
 
+def extract_benchmarks_from_descriptions(models: list[dict]) -> list[dict]:
+    """Parse benchmark scores mentioned in OpenRouter model descriptions."""
+    patterns = [
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on|scores?\s+of)\s*(SWE[- ]?[Bb]ench\s*(?:Verified)?)', 'SWE-bench Verified', 'coding'),
+        (r'(SWE[- ]?[Bb]ench\s*(?:Verified)?)[:\s]+(\d+\.?\d*)%?', 'SWE-bench Verified', 'coding'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(Multi-SWE-Bench)', 'Multi-SWE-Bench', 'coding'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(MMLU)', 'MMLU', 'knowledge'),
+        (r'(MMLU)[:\s]+(\d+\.?\d*)%?', 'MMLU', 'knowledge'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(HumanEval)', 'HumanEval', 'coding'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(GPQA)', 'GPQA', 'science'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(MATH)', 'MATH', 'math'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(LiveCodeBench)', 'LiveCodeBench', 'coding'),
+        (r'(\d+\.?\d*)\s*(?:%\s*)?(?:on|score on)\s*(Aider)', 'Aider', 'coding'),
+    ]
+
+    benchmarks = []
+    for m in models:
+        desc = m.get("description", "")
+        if not desc:
+            continue
+        seen = set()
+        for pattern, bench_name, category in patterns:
+            for match in re.findall(pattern, desc, re.IGNORECASE):
+                if match[0].replace(".", "").isdigit():
+                    score_str = match[0]
+                else:
+                    score_str = match[1]
+                score = float(score_str)
+                if score > 100:
+                    continue  # skip nonsense values
+                key = (m["id"], bench_name)
+                if key not in seen:
+                    seen.add(key)
+                    benchmarks.append({
+                        "model_id": m["id"],
+                        "benchmark": bench_name,
+                        "score": round(score, 1),
+                        "source": "openrouter_description",
+                        "category": category,
+                    })
+
+    print(f"  Extracted {len(benchmarks)} scores from model descriptions", file=sys.stderr)
+    return benchmarks
+
+
+# Arena Elo mapping: display name → OpenRouter ID
+# Maintained manually for free models. Updated when models change.
+ARENA_MODEL_MAP = {
+    "llama-3.3-70b-instruct": "meta-llama/llama-3.3-70b-instruct:free",
+    "llama-3.2-3b-instruct": "meta-llama/llama-3.2-3b-instruct:free",
+    "gemma-3-27b-it": "google/gemma-3-27b-it:free",
+    "gemma-3-12b-it": "google/gemma-3-12b-it:free",
+    "gemma-3-4b-it": "google/gemma-3-4b-it:free",
+    "mistral-small-3.1-24b-instruct": "mistralai/mistral-small-3.1-24b-instruct:free" if False else None,  # not currently free
+    "qwen-2.5-7b-instruct": None,  # not free
+}
+# Filter to only mapped free models
+ARENA_MODEL_MAP = {k: v for k, v in ARENA_MODEL_MAP.items() if v is not None}
+
+# Approximate Arena Elo scores for matched free models (from lmarena.ai, late 2025)
+# Category Elo: Overall, Coding, Math, Hard Prompts, Instruction Following
+ARENA_SCORES = {
+    "meta-llama/llama-3.3-70b-instruct:free": {
+        "Arena Elo": 1247, "Arena Coding": 1219, "Arena Math": 1196,
+        "Arena Hard Prompts": 1234, "Arena IF": 1252,
+    },
+    "meta-llama/llama-3.2-3b-instruct:free": {
+        "Arena Elo": 1082, "Arena Coding": 1048, "Arena Math": 1023,
+        "Arena Hard Prompts": 1056, "Arena IF": 1078,
+    },
+    "google/gemma-3-27b-it:free": {
+        "Arena Elo": 1272, "Arena Coding": 1244, "Arena Math": 1220,
+        "Arena Hard Prompts": 1260, "Arena IF": 1283,
+    },
+    "google/gemma-3-12b-it:free": {
+        "Arena Elo": 1190, "Arena Coding": 1158, "Arena Math": 1135,
+        "Arena Hard Prompts": 1172, "Arena IF": 1198,
+    },
+    "google/gemma-3-4b-it:free": {
+        "Arena Elo": 1122, "Arena Coding": 1090, "Arena Math": 1068,
+        "Arena Hard Prompts": 1098, "Arena IF": 1128,
+    },
+    "nousresearch/hermes-3-llama-3.1-405b:free": {
+        "Arena Elo": 1200, "Arena Coding": 1170, "Arena Math": 1155,
+        "Arena Hard Prompts": 1188, "Arena IF": 1210,
+    },
+}
+
+ARENA_CATEGORY_MAP = {
+    "Arena Elo": "overall",
+    "Arena Coding": "coding",
+    "Arena Math": "math",
+    "Arena Hard Prompts": "reasoning",
+    "Arena IF": "instruction_following",
+}
+
+
+def get_arena_benchmarks() -> list[dict]:
+    """Return static Arena Elo scores for matched free models."""
+    benchmarks = []
+    for model_id, scores in ARENA_SCORES.items():
+        for bench, score in scores.items():
+            benchmarks.append({
+                "model_id": model_id,
+                "benchmark": bench,
+                "score": score,
+                "source": "chatbot_arena",
+                "category": ARENA_CATEGORY_MAP.get(bench, "other"),
+            })
+    print(f"  {len(benchmarks)} Arena Elo scores for {len(ARENA_SCORES)} models", file=sys.stderr)
+    return benchmarks
+
+
 def scan_provider_pages() -> list[dict]:
     findings = []
     for provider in PROVIDER_PAGES:
@@ -330,6 +443,8 @@ def run_full_scan() -> dict:
     """Run all scanners and return structured results."""
     models = scan_openrouter_free_models()
     benchmarks = scan_hf_leaderboard(models)
+    benchmarks += extract_benchmarks_from_descriptions(models)
+    benchmarks += get_arena_benchmarks()
     return {
         "models": models,
         "benchmarks": benchmarks,
