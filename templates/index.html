@@ -371,7 +371,9 @@
 
   <script>
     // ── Base URL (works behind reverse proxy) ────────────────────────────
-    const BASE = document.location.pathname.replace(/\/$/, '') + '/';
+    // Resolve API base — works at /, /credits, /credits/, localhost, Tailscale
+    const _p = document.location.pathname;
+    const BASE = _p.endsWith('/') ? _p : _p + '/';
 
     // ── Tabs ────────────────────────────────────────────────────────────────
     document.querySelectorAll('.tab').forEach(tab => {
