@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Credit Hunter</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface2: #1a1a26;
+      --border: #2a2a3a;
+      --text: #e0e0e8;
+      --text2: #8888a0;
+      --accent: #6366f1;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; font-size: 13px; }
+    .surface { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .surface2 { background: var(--surface2); }
+    .badge-new {
+      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+      background: var(--green); color: #000; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .badge-gone {
+      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+      background: var(--red); color: #fff; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 8px 12px; color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+    th:hover { color: var(--text); }
+    th .sort-arrow { opacity: 0.3; margin-left: 4px; }
+    th.sorted .sort-arrow { opacity: 1; }
+    td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(99, 102, 241, 0.05); }
+    .ctx-bar { height: 4px; border-radius: 2px; background: var(--border); }
+    .ctx-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+    button { cursor: pointer; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--text2); border: 1px solid transparent; border-bottom: none; }
+    .tab.active { background: var(--surface); color: var(--text); border-color: var(--border); }
+    .tab:hover:not(.active) { color: var(--text); }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .filter-input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; color: var(--text); outline: none; width: 250px; }
+    .filter-input:focus { border-color: var(--accent); }
+    .filter-input::placeholder { color: var(--text2); }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-bold tracking-tight" style="color: var(--text)">LLM Credit Hunter</h1>
+      <p style="color: var(--text2); font-size: 12px;">
+        Last scan: <span id="last-scan">{{ stats.last_scan[:16] if stats.last_scan else 'never' }}</span>
+        &middot; {{ stats.models_available }} free models &middot; {{ stats.signals_total }} signals tracked
+      </p>
+    </div>
+    <button id="scan-btn" onclick="triggerScan()" class="px-4 py-2 rounded-lg font-medium text-sm"
+      style="background: var(--accent); color: #fff;"
+      {% if scanning %}disabled{% endif %}>
+      <span id="scan-icon">&#x21bb;</span>
+      <span id="scan-text">{% if scanning %}Scanning...{% else %}Refresh{% endif %}</span>
+    </button>
+  </header>
+
+  <!-- Stats Row -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <stat-card label="Free Models" value="{{ stats.models_available }}" sub="of {{ stats.models_total }} tracked"></stat-card>
+    <stat-card label="Signals" value="{{ stats.signals_total }}" sub="{{ stats.scans_total }} scans"></stat-card>
+    <stat-card label="Providers" value="10" sub="monitored"></stat-card>
+    <stat-card label="Sources" value="5" sub="HN / RSS / GitHub / API / Pages"></stat-card>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-0" style="padding-left: 4px;">
+    <div class="tab active" data-tab="models">Free Models</div>
+    <div class="tab" data-tab="signals">Signals</div>
+    <div class="tab" data-tab="programs">Credit Programs</div>
+  </div>
+
+  <!-- Models Panel -->
+  <div class="surface p-0 mb-6 panel active" id="panel-models">
+    <div class="p-4 flex items-center gap-4" style="border-bottom: 1px solid var(--border);">
+      <input class="filter-input" id="model-filter" placeholder="Filter models..." oninput="filterModels()">
+      <label style="color: var(--text2); font-size: 12px;">
+        <input type="checkbox" id="show-gone" onchange="toggleGone()"> Show disappeared
+      </label>
+    </div>
+    <div style="overflow-x: auto;">
+      <table id="model-table">
+        <thead>
+          <tr>
+            <th data-sort="id">Model <span class="sort-arrow">&#x25B2;</span></th>
+            <th data-sort="provider">Provider <span class="sort-arrow">&#x25B2;</span></th>
+            <th data-sort="context_length" class="sorted">Context <span class="sort-arrow">&#x25BC;</span></th>
+            <th data-sort="first_seen">First Seen <span class="sort-arrow">&#x25B2;</span></th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in models %}
+          <tr data-available="{{ m.is_available }}" class="model-row {% if not m.is_available %}hidden{% endif %}">
+            <td>
+              <a href="https://openrouter.ai/{{ m.id }}" target="_blank">{{ m.id }}</a>
+              {% set today = stats.last_scan[:10] if stats.last_scan else '' %}
+              {% if m.first_seen[:10] == today %}
+              <span class="badge-new">new</span>
+              {% endif %}
+            </td>
+            <td style="color: var(--text2)">{{ m.provider }}</td>
+            <td>
+              <div class="flex items-center gap-2">
+                <span>{{ "{:,}".format(m.context_length) }}</span>
+                <div class="ctx-bar" style="width: 60px;">
+                  <div class="ctx-fill" style="width: {{ [100, (m.context_length / 10000)|round|int]|min }}%"></div>
+                </div>
+              </div>
+            </td>
+            <td style="color: var(--text2)">{{ m.first_seen[:10] }}</td>
+            <td>
+              {% if m.is_available %}
+              <span style="color: var(--green);">&#x25CF; Available</span>
+              {% else %}
+              <span class="badge-gone">gone</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Signals Panel -->
+  <div class="surface p-0 mb-6 panel" id="panel-signals">
+    <div class="p-4" style="border-bottom: 1px solid var(--border);">
+      <input class="filter-input" id="signal-filter" placeholder="Filter signals..." oninput="filterSignals()">
+    </div>
+    <div style="overflow-x: auto;">
+      <table id="signal-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Title</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in signals %}
+          <tr class="signal-row">
+            <td style="color: var(--text2); white-space: nowrap;">{{ s.source }}</td>
+            <td>
+              {% if s.url %}
+              <a href="{{ s.url }}" target="_blank">{{ s.title[:100] }}</a>
+              {% else %}
+              {{ s.title[:100] }}
+              {% endif %}
+              {% set today = stats.last_scan[:10] if stats.last_scan else '' %}
+              {% if s.first_seen[:10] == today %}
+              <span class="badge-new">new</span>
+              {% endif %}
+            </td>
+            <td style="color: var(--text2); white-space: nowrap;">{{ s.first_seen[:10] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Credit Programs Panel -->
+  <div class="surface p-4 mb-6 panel" id="panel-programs">
+    <div class="grid gap-4 md:grid-cols-2">
+      {% for p in signals if 'provider_page' in (p.source|lower) or p.source in ['Anthropic', 'OpenAI', 'Google AI', 'AWS Bedrock', 'Azure OpenAI', 'Mistral', 'Together AI', 'Groq', 'Fireworks AI', 'OpenRouter'] %}
+      <div class="surface2 p-4 rounded-lg">
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-medium">{{ p.source }}</span>
+          {% if p.url %}<a href="{{ p.url }}" target="_blank" style="font-size: 11px;">Visit &rarr;</a>{% endif %}
+        </div>
+        <p style="color: var(--text2); font-size: 12px; line-height: 1.5;">{{ p.title[:200] }}</p>
+      </div>
+      {% else %}
+      <!-- Static fallback if no provider signals yet -->
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">AWS Activate</span>
+        <p style="color: var(--text2); font-size: 12px;">Up to $100k in credits. Covers Bedrock (Claude, Llama, etc).</p>
+        <a href="https://aws.amazon.com/activate/" target="_blank" style="font-size: 11px;">Apply &rarr;</a>
+      </div>
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">Microsoft for Startups</span>
+        <p style="color: var(--text2); font-size: 12px;">Up to $150k Azure/OpenAI credits via Founders Hub.</p>
+        <a href="https://www.microsoft.com/en-us/startups" target="_blank" style="font-size: 11px;">Apply &rarr;</a>
+      </div>
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">Google Cloud Free</span>
+        <p style="color: var(--text2); font-size: 12px;">$300 free trial credits. Gemini free tier via AI Studio.</p>
+        <a href="https://cloud.google.com/free" target="_blank" style="font-size: 11px;">Start &rarr;</a>
+      </div>
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">Azure Free</span>
+        <p style="color: var(--text2); font-size: 12px;">$200 free credits for 30 days. Covers Azure OpenAI.</p>
+        <a href="https://azure.microsoft.com/en-us/free/" target="_blank" style="font-size: 11px;">Start &rarr;</a>
+      </div>
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">Google AI Studio</span>
+        <p style="color: var(--text2); font-size: 12px;">Gemini 2.5 Pro/Flash — generous free tier, no card required.</p>
+        <a href="https://ai.google.dev/pricing" target="_blank" style="font-size: 11px;">Use &rarr;</a>
+      </div>
+      <div class="surface2 p-4 rounded-lg">
+        <span class="font-medium">Fireworks AI</span>
+        <p style="color: var(--text2); font-size: 12px;">$1 in free credits on signup.</p>
+        <a href="https://fireworks.ai/pricing" target="_blank" style="font-size: 11px;">Start &rarr;</a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Web Components -->
+  <script>
+    class StatCard extends HTMLElement {
+      connectedCallback() {
+        const label = this.getAttribute('label');
+        const value = this.getAttribute('value');
+        const sub = this.getAttribute('sub');
+        this.innerHTML = `
+          <div class="surface p-4">
+            <div style="color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">${label}</div>
+            <div style="font-size: 24px; font-weight: 700;">${value}</div>
+            <div style="color: var(--text2); font-size: 11px; margin-top: 2px;">${sub}</div>
+          </div>
+        `;
+      }
+    }
+    customElements.define('stat-card', StatCard);
+  </script>
+
+  <!-- Interactions -->
+  <script>
+    // Tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // Sort
+    let sortCol = 'context_length';
+    let sortDir = -1; // -1 = desc
+
+    document.querySelectorAll('#model-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.sort;
+        if (col === sortCol) { sortDir *= -1; }
+        else { sortCol = col; sortDir = col === 'context_length' ? -1 : 1; }
+
+        document.querySelectorAll('#model-table th').forEach(t => {
+          t.classList.remove('sorted');
+          t.querySelector('.sort-arrow').textContent = '\u25B2';
+        });
+        th.classList.add('sorted');
+        th.querySelector('.sort-arrow').textContent = sortDir === 1 ? '\u25B2' : '\u25BC';
+
+        const tbody = document.querySelector('#model-table tbody');
+        const rows = [...tbody.querySelectorAll('tr')];
+        rows.sort((a, b) => {
+          const aCell = a.querySelector(`td:nth-child(${th.cellIndex + 1})`);
+          const bCell = b.querySelector(`td:nth-child(${th.cellIndex + 1})`);
+          let aVal = aCell.textContent.trim().replace(/,/g, '');
+          let bVal = bCell.textContent.trim().replace(/,/g, '');
+          const aNum = parseFloat(aVal);
+          const bNum = parseFloat(bVal);
+          if (!isNaN(aNum) && !isNaN(bNum)) return (aNum - bNum) * sortDir;
+          return aVal.localeCompare(bVal) * sortDir;
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+
+    // Filter models
+    function filterModels() {
+      const q = document.getElementById('model-filter').value.toLowerCase();
+      document.querySelectorAll('.model-row').forEach(row => {
+        if (row.classList.contains('gone-hidden')) return;
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    // Toggle disappeared models
+    function toggleGone() {
+      const show = document.getElementById('show-gone').checked;
+      document.querySelectorAll('.model-row').forEach(row => {
+        if (row.dataset.available === '0') {
+          row.classList.toggle('gone-hidden', !show);
+          row.classList.toggle('hidden', !show);
+        }
+      });
+    }
+
+    // Filter signals
+    function filterSignals() {
+      const q = document.getElementById('signal-filter').value.toLowerCase();
+      document.querySelectorAll('.signal-row').forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    // Scan trigger
+    async function triggerScan() {
+      const btn = document.getElementById('scan-btn');
+      const icon = document.getElementById('scan-icon');
+      const text = document.getElementById('scan-text');
+      btn.disabled = true;
+      icon.classList.add('spin');
+      text.textContent = 'Scanning...';
+
+      try {
+        const res = await fetch('api/scan', { method: 'POST' });
+        if (res.ok) {
+          text.textContent = 'Running...';
+          // Poll until done
+          const poll = setInterval(async () => {
+            const stats = await (await fetch('api/stats')).json();
+            if (!stats.scanning) {
+              clearInterval(poll);
+              location.reload();
+            }
+          }, 3000);
+        } else {
+          const data = await res.json();
+          text.textContent = data.error || 'Error';
+          setTimeout(() => { text.textContent = 'Refresh'; btn.disabled = false; icon.classList.remove('spin'); }, 2000);
+        }
+      } catch (e) {
+        text.textContent = 'Error';
+        setTimeout(() => { text.textContent = 'Refresh'; btn.disabled = false; icon.classList.remove('spin'); }, 2000);
+      }
+    }
+  </script>
+</body>
+</html>
